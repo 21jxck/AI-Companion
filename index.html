@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI COMPANION</title>
+</head>
+<body>
+    <div onkeydown="if(event.key === 'Enter') sendButton()">
+        <h1 style="font: 30px Franklin Gothic small;">AI COMPANION</h1>
+        <div>
+            <p style="width: 500px; font: 15px Franklin Gothic small;" id="risposta"></p>
+        </div>
+        <input name="domanda" size=52 placeholder="Inserisci una domanda..." id="inputDomanda" ></input>
+        <button name="bottone" style="width: 100px;" onclick="sendButton()">Invia > </button>
+        <button name="bottoneAudio" style="width: px; border-radius: 100px; border-color: gray;" id="bottoneAudio">⚫</button>
+        <audio id="audioPlayer" controls></audio>
+    </div>
+
+
+    <script>
+        const rispostaDiv = document.getElementById('risposta');
+        const input = document.getElementById('inputDomanda');
+
+        function sendButton() {
+            const text1 = input.value.trim();
+            if (!text1) return;
+
+            rispostaDiv.innerHTML += `<div><span style="color:green">User: </span> ${text1}</div>`;
+            input.value = "";
+            console.log("Domanda inviata:", text1);
+
+
+            fetch('http://localhost:9000/aicompanion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domanda: text1 })
+            })
+            .then(response => {
+                if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+                return response.json();
+            })
+            .then(data => {
+                console.log("Risposta ricevuta:", data.content);
+                
+                rispostaDiv.innerHTML += `<br> <div><span style="color:blue">AI: </span>${data.content}</div><br>`;
+                rispostaDiv.scrollTop = rispostaDiv.scrollHeight;
+                
+                const audio = new Audio();
+                audio.src = "data:audio/wav;base64," + data.base64;
+                audio.play();
+            })
+            .catch(err => {
+                rispostaDiv.innerHTML += `<br> <div><span style="color:red">Errore: </span>${err.message} </div>`;
+                console.error(err);
+            });
+        }
+
+        // audio button
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        const button = document.getElementById('bottoneAudio');
+        const audioPlayer = document.getElementById('audioPlayer');
+
+        button.addEventListener('click', async () => {
+        if (!isRecording) {
+            button.textContent = "🔴";
+            isRecording = true;
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+
+            audioChunks = [];
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+            mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            audioPlayer.src = audioUrl;
+
+            try {
+                const response = await fetch('http://localhost:9000/aicompanion', {
+                method: 'POST',
+                body: audioBlob,
+                headers: { 'Content-Type': 'audio/webm' }
+                });
+                console.log('Audio inviato:', response.status);
+            } catch (err) {
+                console.error('Errore durante l\'invio:', err);
+            }
+            };
+
+            mediaRecorder.start();
+        } else {
+            button.textContent = "⚫";
+            isRecording = false;
+            mediaRecorder.stop();
+        }
+        });
+    </script>
+</body>
+</html>
