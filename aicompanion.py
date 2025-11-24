@@ -12,15 +12,16 @@ embeddings = OllamaEmbeddings(model="embeddinggemma:300m")
 vs = InMemoryVectorStore.load("./vs/alice.db", embeddings)
 retriever = vs.as_retriever()
 
-from kokoro import KPipeline, KModel    # genera l'audio
-import soundfile as sf                  # permette di gestire i file waveform
-from pydub import AudioSegment          # permette di unire i file
-import base64                           # permette la codifica del file come base64
+from kokoro import KPipeline, KModel
+import soundfile as sf
+from pydub import AudioSegment
+import base64
 
 kmodel = KModel(model="models/kokoro-v1_0.pth", config="models/config.json")
 pipeline = KPipeline(lang_code="i", model=kmodel)
 
 print("Creo il contesto")
+
 
 context = [('system', 'sei il Cappellaio Matto che racconta la sua storia'),
            ('system', '')
@@ -30,8 +31,12 @@ lcmodel.invoke(context)
 
 print("Contesto creato")
 
+import whisper
+wmodel = whisper.load_model("./models/small.pt", device="cuda")
+
+
 @app.route('/aicompanion', methods=['POST', 'OPTIONS'])
-def aicompanion():
+def test():
     if request.method == 'OPTIONS':
         response = make_response()
         response.headers['Access-Control-Allow-Origin'] = '*'
@@ -40,12 +45,22 @@ def aicompanion():
         return response
 
     if request.is_json:
+        # gestione testo
         domanda = (request.json.get('domanda') or "").strip()
-    else:
-        domanda = (request.form.get('domanda') or "").strip()
+        if not domanda:
+            return jsonify({"error": "Nessuna domanda ricevuta"}), 400
 
-    if not domanda:
-        return jsonify({"error": "Nessuna domanda ricevuta"}), 400
+    elif 'audio' in request.files:
+        # gestione audio
+        file = request.files['audio']
+        print("Ricevuto file audio:", file.filename)
+        temp_audio_path = "./generated/input_audio/audioUser.ogg"
+        file.save(temp_audio_path)
+
+        domanda = speech_to_text(temp_audio_path)
+
+    else:
+        return jsonify({"error": "Nessun dato valido ricevuto"}), 400
 
     print(f"Domanda ricevuta: {domanda}")
 
@@ -54,7 +69,7 @@ def aicompanion():
     # utilizziamo il rag
     documents = retriever.invoke(domanda)
     doc_texts = "\n".join(doc.page_content for doc in documents)
-    doc_texts = "usa questo contesto per rispondere, attieniti solo a questo contesto, rispondi solo alle domande che riguardano il tuo mondo (il paese delle meraviglie) e non alle domande che richiedono qualcosa della Terra e se non ci riesci rispondi boh: " + doc_texts
+    doc_texts = "usa questo contesto per rispondere e rispondi solo alle domande che riguardano il tuo mondo (il paese delle meraviglie), non ad altri mondi tipo la Terra o altro. Se non conosci la risposta o è fuori dal contesto rispondi 'boh': " + doc_texts
     context[1] = ('system', doc_texts)
 
     response = lcmodel.invoke(context)
@@ -65,16 +80,17 @@ def aicompanion():
     wav_b64 = text_to_speech(response.content)
 
     response = jsonify({
-        "content" : str(response.content),
-        "language" : "Italian",
-        "base64" : wav_b64
+        "content": str(response.content),
+        "language": "Italian",
+        "base64" : wav_b64,
+        "transcription" : domanda,
     })
 
     response.headers['Access-Control-Allow-Origin'] = '*'
     return response
 
 def text_to_speech(text):
-    generator = pipeline(text, voice='models/voices/am_fenrir.pt', speed=0.9)
+    generator = pipeline(text, voice='models/voices/am_onyx.pt', speed=0.9)
 
     length = 0
     for i, (gs, ps, audio) in enumerate(generator) :
@@ -93,6 +109,10 @@ def text_to_speech(text):
     wav_b64 = base64.b64encode(wav_bytes).decode("utf-8")
 
     return wav_b64
+
+def speech_to_text(audio_path) :
+    result = wmodel.transcribe(audio=audio_path, language="it", fp16=False)
+    return result["text"]
 
 if __name__ == '__main__':
     print("Avvio del server sulla porta 9000...")
